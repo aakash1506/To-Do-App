@@ -64,6 +64,24 @@ describe('POST /api/todos', () => {
     expect(body.due_date).toBe(due)
   })
 
+  it('creates a todo with explicit priority', async () => {
+    const req = makeRequest({ title: 'Urgent task', priority: 'high' })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.priority).toBe('high')
+  })
+
+  it('defaults priority to medium when omitted', async () => {
+    const req = makeRequest({ title: 'Normal task' })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.priority).toBe('medium')
+  })
+
   it('returns 400 for empty title', async () => {
     const req = makeRequest({ title: '' })
     const res = await createTodo(req)
@@ -87,6 +105,13 @@ describe('POST /api/todos', () => {
     expect(res.status).toBe(400)
     const body = await res.json()
     expect(body.error).toMatch(/future/i)
+  })
+
+  it('returns 400 for invalid priority', async () => {
+    const req = makeRequest({ title: 'Task', priority: 'critical' })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(400)
   })
 })
 
@@ -163,6 +188,22 @@ describe('PUT /api/todos/[id]', () => {
     expect(body.title).toBe('New title')
   })
 
+  it('updates priority', async () => {
+    const createRes = await createTodo(makeRequest({ title: 'Task', priority: 'medium' }))
+    const { id } = await createRes.json()
+
+    const req = new NextRequest(`http://localhost/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: 'low' }),
+    })
+    const res = await updateTodo(req, makeParams(id))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.priority).toBe('low')
+  })
+
   it('marks a todo as completed', async () => {
     const createRes = await createTodo(makeRequest({ title: 'Task' }))
     const { id } = await createRes.json()
@@ -197,6 +238,19 @@ describe('PUT /api/todos/[id]', () => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: '' }),
+    })
+    const res = await updateTodo(req, makeParams(id))
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 for invalid priority', async () => {
+    const createRes = await createTodo(makeRequest({ title: 'Task' }))
+    const { id } = await createRes.json()
+
+    const req = new NextRequest(`http://localhost/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority: 'critical' }),
     })
     const res = await updateTodo(req, makeParams(id))
     expect(res.status).toBe(400)

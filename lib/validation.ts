@@ -18,6 +18,8 @@ export const createTodoSchema = z.object({
     .transform((s) => s.trim())
     .refine((s) => s.length > 0, 'Title is required'),
 
+  priority: z.enum(['high', 'medium', 'low']).default('medium'),
+
   due_date: z
     .string()
     .datetime({ offset: true, message: 'Due date must be a valid ISO 8601 datetime' })
@@ -37,6 +39,8 @@ export const updateTodoSchema = z.object({
     .transform((s) => s.trim())
     .refine((s) => s.length > 0, 'Title is required')
     .optional(),
+
+  priority: z.enum(['high', 'medium', 'low']).optional(),
 
   completed: z.boolean().optional(),
 

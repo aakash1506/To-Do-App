@@ -91,6 +91,35 @@ describe('createTodoSchema', () => {
       expect(result.success).toBe(false)
     })
   })
+
+  describe('priority validation', () => {
+    it('accepts high priority', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'high' })
+      expect(result.success).toBe(true)
+      if (result.success) expect(result.data.priority).toBe('high')
+    })
+
+    it('accepts medium priority', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'medium' })
+      expect(result.success).toBe(true)
+    })
+
+    it('accepts low priority', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'low' })
+      expect(result.success).toBe(true)
+    })
+
+    it('defaults to medium when priority is omitted', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task' })
+      expect(result.success).toBe(true)
+      if (result.success) expect(result.data.priority).toBe('medium')
+    })
+
+    it('rejects an invalid priority value', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'urgent' })
+      expect(result.success).toBe(false)
+    })
+  })
 })
 
 describe('updateTodoSchema', () => {
@@ -128,6 +157,16 @@ describe('updateTodoSchema', () => {
   it('rejects a past due_date', () => {
     const past = new Date(Date.now() - 60 * 1000).toISOString()
     const result = updateTodoSchema.safeParse({ due_date: past })
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts priority update', () => {
+    const result = updateTodoSchema.safeParse({ priority: 'high' })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects invalid priority update', () => {
+    const result = updateTodoSchema.safeParse({ priority: 'critical' })
     expect(result.success).toBe(false)
   })
 })
