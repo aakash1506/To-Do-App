@@ -5,6 +5,8 @@ node_modules
 /playwright-report
 /test-results
 todos.db
+todos.db-wal
+todos.db-shm
 *.tsbuildinfo
 next-env.d.ts
 .env*.local
