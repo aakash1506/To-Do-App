@@ -27,14 +27,21 @@ export async function POST(request: NextRequest) {
 
     const todo = todoDB.create({
       title: parsed.data.title,
+      priority: parsed.data.priority,
       due_date: parsed.data.due_date ?? null,
-      is_recurring: parsed.data.is_recurring ?? false,
+      reminder_minutes: parsed.data.reminder_minutes ?? null,
+      is_recurring: parsed.data.is_recurring,
       recurrence_pattern: parsed.data.recurrence_pattern ?? null,
+      tag_ids: parsed.data.tag_ids,
       user_id: 1,
     })
 
     return NextResponse.json(todo, { status: 201 })
   } catch (error) {
+    if (error instanceof Error && /One or more tags do not exist/i.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+
     console.error('POST /api/todos error:', error)
     return NextResponse.json(
       { error: 'Failed to create todo' },

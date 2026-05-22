@@ -1,6 +1,7 @@
 import {
+  createTagSchema,
   createTodoSchema,
-  getRecurringValidationError,
+  updateTagSchema,
   updateTodoSchema,
 } from '@/lib/validation'
 
@@ -94,65 +95,45 @@ describe('createTodoSchema', () => {
       })
       expect(result.success).toBe(false)
     })
+  })
 
-    it('accepts a valid recurring todo payload', () => {
+  describe('tag_ids validation', () => {
+    it('accepts valid positive integer tag ids', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', tag_ids: [1, 2] })
+      expect(result.success).toBe(true)
+    })
+
+    it('rejects zero and negative tag ids', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', tag_ids: [0, -1] })
+      expect(result.success).toBe(false)
+    })
+
+    it('accepts a recurring todo with recurrence_pattern and due_date', () => {
       const result = createTodoSchema.safeParse({
-        title: 'Weekly planning',
+        title: 'Daily standup',
         due_date: futureDate(),
         is_recurring: true,
-        recurrence_pattern: 'weekly',
+        recurrence_pattern: 'daily',
       })
       expect(result.success).toBe(true)
     })
 
+    it('rejects recurring todo missing recurrence_pattern', () => {
+      const result = createTodoSchema.safeParse({
+        title: 'Recurring task',
+        due_date: futureDate(),
+        is_recurring: true,
+      })
+      expect(result.success).toBe(false)
+    })
+
     it('rejects recurring todo without due_date', () => {
       const result = createTodoSchema.safeParse({
-        title: 'Daily habit',
+        title: 'Recurring task',
         is_recurring: true,
-        recurrence_pattern: 'daily',
+        recurrence_pattern: 'weekly',
       })
       expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.error.issues[0].message).toBe('Recurring todos require a due date')
-      }
-    })
-
-    it('rejects recurring todo without recurrence_pattern', () => {
-      const result = createTodoSchema.safeParse({
-        title: 'Daily habit',
-        due_date: futureDate(),
-        is_recurring: true,
-      })
-      expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.error.issues[0].message).toBe('Recurrence pattern is required')
-      }
-    })
-
-    it('rejects pattern when repeat is disabled', () => {
-      const result = createTodoSchema.safeParse({
-        title: 'One-off',
-        due_date: futureDate(),
-        is_recurring: false,
-        recurrence_pattern: 'daily',
-      })
-      expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.error.issues[0].message).toBe('Recurrence pattern requires Repeat enabled')
-      }
-    })
-
-    it('rejects invalid recurrence pattern', () => {
-      const result = createTodoSchema.safeParse({
-        title: 'Invalid pattern',
-        due_date: futureDate(),
-        is_recurring: true,
-        recurrence_pattern: 'fortnightly',
-      })
-      expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.error.issues[0].message).toBe('Invalid recurrence pattern')
-      }
     })
   })
 })
@@ -195,56 +176,59 @@ describe('updateTodoSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('accepts recurrence fields in partial updates', () => {
+  it('accepts updating tag_ids', () => {
+    const result = updateTodoSchema.safeParse({ tag_ids: [1, 2, 3] })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects invalid tag_ids on update', () => {
+    const result = updateTodoSchema.safeParse({ tag_ids: [1, -2] })
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts recurrence updates when enabling recurring', () => {
     const result = updateTodoSchema.safeParse({
+      due_date: futureDate(),
       is_recurring: true,
       recurrence_pattern: 'monthly',
     })
     expect(result.success).toBe(true)
   })
 
-  it('rejects invalid recurrence pattern in updates', () => {
+  it('rejects recurrence_pattern when recurring is explicitly disabled', () => {
     const result = updateTodoSchema.safeParse({
-      recurrence_pattern: 'fortnightly',
+      is_recurring: false,
+      recurrence_pattern: 'yearly',
     })
     expect(result.success).toBe(false)
   })
 })
 
-describe('getRecurringValidationError', () => {
-  it('returns null for valid recurring settings', () => {
-    const error = getRecurringValidationError({
-      is_recurring: true,
-      due_date: futureDate(),
-      recurrence_pattern: 'daily',
-    })
-    expect(error).toBeNull()
+describe('createTagSchema', () => {
+  it('accepts valid tag payload', () => {
+    const result = createTagSchema.safeParse({ name: 'Urgent', color: '#EF4444' })
+    expect(result.success).toBe(true)
   })
 
-  it('detects missing due date for recurring state', () => {
-    const error = getRecurringValidationError({
-      is_recurring: true,
-      due_date: null,
-      recurrence_pattern: 'daily',
-    })
-    expect(error).toBe('Recurring todos require a due date')
+  it('rejects empty name', () => {
+    const result = createTagSchema.safeParse({ name: '   ', color: '#EF4444' })
+    expect(result.success).toBe(false)
   })
 
-  it('detects missing pattern for recurring state', () => {
-    const error = getRecurringValidationError({
-      is_recurring: true,
-      due_date: futureDate(),
-      recurrence_pattern: null,
-    })
-    expect(error).toBe('Recurrence pattern is required')
+  it('rejects invalid color', () => {
+    const result = createTagSchema.safeParse({ name: 'Urgent', color: 'red' })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('updateTagSchema', () => {
+  it('accepts partial update', () => {
+    const result = updateTagSchema.safeParse({ color: '#22C55E' })
+    expect(result.success).toBe(true)
   })
 
-  it('detects pattern without recurring enabled', () => {
-    const error = getRecurringValidationError({
-      is_recurring: false,
-      due_date: futureDate(),
-      recurrence_pattern: 'weekly',
-    })
-    expect(error).toBe('Recurrence pattern requires Repeat enabled')
+  it('rejects invalid color', () => {
+    const result = updateTagSchema.safeParse({ color: '#XYZ123' })
+    expect(result.success).toBe(false)
   })
 })

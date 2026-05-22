@@ -1,18 +1,21 @@
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
+import Database from 'better-sqlite3'
 
 // Use an in-memory or temp database for tests
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'todo-test-'))
 const testDbPath = path.join(tmpDir, 'test.db')
 process.env.DB_PATH = testDbPath
 
-import { todoDB, closeDb, getDb } from '@/lib/db'
+import { todoDB, tagDB, closeDb, getDb } from '@/lib/db'
 
 describe('todoDB', () => {
   beforeEach(() => {
     // Clear todos table before each test
     const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
     db.exec('DELETE FROM todos')
   })
 
@@ -67,10 +70,41 @@ describe('todoDB', () => {
       expect(todo.completed).toBe(false)
     })
 
+    it('defaults priority to medium', () => {
+      const todo = todoDB.create({ title: 'Default priority task' })
+      expect(todo.priority).toBe('medium')
+    })
+
+    it('creates a todo with explicit priority', () => {
+      const todo = todoDB.create({ title: 'Urgent task', priority: 'high' })
+      expect(todo.priority).toBe('high')
+    })
+
     it('assigns incrementing ids', () => {
       const a = todoDB.create({ title: 'First' })
       const b = todoDB.create({ title: 'Second' })
       expect(b.id).toBeGreaterThan(a.id)
+    })
+
+    it('creates a todo with tags', () => {
+      const work = tagDB.create({ name: 'Work', color: '#2563EB' })
+      const urgent = tagDB.create({ name: 'Urgent', color: '#EF4444' })
+
+      const todo = todoDB.create({
+        title: 'Prepare report',
+        tag_ids: [work.id, urgent.id],
+      })
+
+      expect(todo.tags).toHaveLength(2)
+      expect(todo.tags.map((tag) => tag.name).sort()).toEqual(['Urgent', 'Work'])
+    })
+
+    it('does not create todo when tag assignment is invalid', () => {
+      expect(() => {
+        todoDB.create({ title: 'Should fail', tag_ids: [99999] })
+      }).toThrow(/do not exist/i)
+
+      expect(todoDB.findAll()).toHaveLength(0)
     })
   })
 
@@ -114,6 +148,18 @@ describe('todoDB', () => {
       const todos = todoDB.findAll()
       expect(todos[0].title).toBe('Sooner')
       expect(todos[1].title).toBe('Later')
+    })
+
+    it('sorts by priority before due date', () => {
+      const soon = new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString()
+      const later = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+
+      todoDB.create({ title: 'Low first by date', priority: 'low', due_date: soon })
+      todoDB.create({ title: 'High later by date', priority: 'high', due_date: later })
+
+      const todos = todoDB.findAll()
+      expect(todos[0].title).toBe('High later by date')
+      expect(todos[1].title).toBe('Low first by date')
     })
   })
 
@@ -209,6 +255,14 @@ describe('todoDB', () => {
       expect(updated!.due_date).toBeNull()
     })
 
+    it('updates priority', () => {
+      const todo = todoDB.create({ title: 'Task', priority: 'medium' })
+      const updated = todoDB.update(todo.id, { priority: 'low' })
+
+      expect(updated).not.toBeNull()
+      expect(updated!.priority).toBe('low')
+    })
+
     it('returns null for a non-existent id', () => {
       expect(todoDB.update(99999, { title: 'x' })).toBeNull()
     })
@@ -217,6 +271,38 @@ describe('todoDB', () => {
       const todo = todoDB.create({ title: 'User 2 task', user_id: 2 })
       const result = todoDB.update(todo.id, { title: 'Hacked' }, 1)
       expect(result).toBeNull()
+    })
+
+    it('replaces todo tags when tag_ids is provided', () => {
+      const work = tagDB.create({ name: 'Work', color: '#2563EB' })
+      const home = tagDB.create({ name: 'Home', color: '#22C55E' })
+      const urgent = tagDB.create({ name: 'Urgent', color: '#EF4444' })
+
+      const todo = todoDB.create({ title: 'Task', tag_ids: [work.id, home.id] })
+      const updated = todoDB.update(todo.id, { tag_ids: [urgent.id] })
+
+      expect(updated).not.toBeNull()
+      expect(updated!.tags).toHaveLength(1)
+      expect(updated!.tags[0].name).toBe('Urgent')
+    })
+
+    it('throws when assigning non-existent tags', () => {
+      const todo = todoDB.create({ title: 'Task' })
+      expect(() => todoDB.update(todo.id, { tag_ids: [99999] })).toThrow(
+        /do not exist/i,
+      )
+    })
+
+    it('does not partially update fields when tag assignment fails', () => {
+      const todo = todoDB.create({ title: 'Original title' })
+
+      expect(() => {
+        todoDB.update(todo.id, { title: 'Changed title', tag_ids: [99999] })
+      }).toThrow(/do not exist/i)
+
+      const refreshed = todoDB.findById(todo.id)
+      expect(refreshed).not.toBeNull()
+      expect(refreshed!.title).toBe('Original title')
     })
   })
 
@@ -293,6 +379,39 @@ describe('todoDB', () => {
     it('does not delete other users todos', () => {
       const todo = todoDB.create({ title: 'User 2 task', user_id: 2 })
       expect(todoDB.delete(todo.id, 1)).toBe(false)
+    })
+  })
+
+  describe('tagDB', () => {
+    it('creates and lists tags', () => {
+      tagDB.create({ name: 'Work', color: '#2563EB' })
+      tagDB.create({ name: 'Urgent', color: '#EF4444' })
+
+      const tags = tagDB.findAll()
+      expect(tags).toHaveLength(2)
+      expect(tags.map((tag) => tag.name)).toEqual(['Urgent', 'Work'])
+    })
+
+    it('updates a tag', () => {
+      const tag = tagDB.create({ name: 'Work', color: '#2563EB' })
+      const updated = tagDB.update(tag.id, { name: 'Office', color: '#0EA5E9' })
+
+      expect(updated).not.toBeNull()
+      expect(updated!.name).toBe('Office')
+      expect(updated!.color).toBe('#0EA5E9')
+    })
+
+    it('deletes a tag and detaches from todos', () => {
+      const tag = tagDB.create({ name: 'Work', color: '#2563EB' })
+      const todo = todoDB.create({ title: 'Task', tag_ids: [tag.id] })
+      expect(todo.tags).toHaveLength(1)
+
+      const deleted = tagDB.delete(tag.id)
+      expect(deleted).toBe(true)
+
+      const refreshed = todoDB.findById(todo.id)
+      expect(refreshed).not.toBeNull()
+      expect(refreshed!.tags).toHaveLength(0)
     })
   })
 })

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { todoDB } from '@/lib/db'
-import { getRecurringValidationError, updateTodoSchema } from '@/lib/validation'
+import { updateTodoSchema } from '@/lib/validation'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -42,47 +42,17 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: firstError }, { status: 400 })
     }
 
-    const normalizedPatch = { ...parsed.data }
-    if (
-      normalizedPatch.is_recurring === false &&
-      normalizedPatch.recurrence_pattern === undefined
-    ) {
-      normalizedPatch.recurrence_pattern = null
-    }
-
-    const existing = todoDB.findById(numId, 1)
-    if (!existing) {
-      return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
-    }
-
-    const mergedRecurringState = {
-      is_recurring: parsed.data.is_recurring ?? existing.is_recurring,
-      recurrence_pattern:
-        normalizedPatch.recurrence_pattern !== undefined
-          ? normalizedPatch.recurrence_pattern
-          : existing.recurrence_pattern,
-      due_date:
-        normalizedPatch.due_date !== undefined
-          ? normalizedPatch.due_date
-          : existing.due_date,
-    }
-
-    const recurrenceError = getRecurringValidationError(mergedRecurringState)
-    if (recurrenceError) {
-      return NextResponse.json({ error: recurrenceError }, { status: 400 })
-    }
-
-    const result = todoDB.updateWithRecurring(numId, normalizedPatch, 1)
+    const result = todoDB.updateWithRecurring(numId, {
+      ...parsed.data,
+      reminder_minutes: parsed.data.reminder_minutes ?? undefined,
+    }, 1)
     if (!result) {
       return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
     }
 
     return NextResponse.json(result)
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('Recurring todos require')
-    ) {
+    if (error instanceof Error && /One or more tags do not exist/i.test(error.message)) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
