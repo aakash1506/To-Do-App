@@ -11,3 +11,4 @@ todos.db-shm
 next-env.d.ts
 .env*.local
 .env
+todos.db-wal
