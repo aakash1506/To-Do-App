@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useNotifications } from '@/lib/hooks/useNotifications'
+import { REMINDER_OPTIONS, formatReminderBadge } from '@/lib/reminders'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,6 +11,7 @@ interface Todo {
   title: string
   completed: boolean
   due_date: string | null
+  reminder_minutes: number | null
   created_at: string
   updated_at: string
 }
@@ -67,7 +70,7 @@ function DueDateBadge({ dateStr }: { dateStr: string }) {
 interface EditModalProps {
   todo: Todo
   onClose: () => void
-  onSave: (id: number, title: string, due_date: string | null) => Promise<void>
+  onSave: (id: number, title: string, due_date: string | null, reminder_minutes: number | null) => Promise<void>
 }
 
 function EditModal({ todo, onClose, onSave }: EditModalProps) {
@@ -75,6 +78,7 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
   const [dueDate, setDueDate] = useState(
     todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : '',
   )
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(todo.reminder_minutes)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -90,7 +94,7 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
         dueDate
           ? new Date(dueDate).toISOString()
           : null
-      await onSave(todo.id, title.trim(), due)
+      await onSave(todo.id, title.trim(), due, dueDate ? reminderMinutes : null)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -124,10 +128,29 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
             <input
               type="datetime-local"
               value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
+              onChange={(e) => {
+                setDueDate(e.target.value)
+                if (!e.target.value) setReminderMinutes(null)
+              }}
               min={getMinFutureDate()}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reminder (optional)
+            </label>
+            <select
+              value={reminderMinutes ?? ''}
+              onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
+              disabled={!dueDate}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">No reminder</option>
+              {REMINDER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <div className="flex gap-2 justify-end">
@@ -194,8 +217,13 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
           {todo.title}
         </p>
         {todo.due_date && (
-          <div className="mt-1">
+          <div className="mt-1 flex flex-wrap gap-1">
             <DueDateBadge dateStr={todo.due_date} />
+            {todo.reminder_minutes !== null && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">
+                {formatReminderBadge(todo.reminder_minutes)}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -273,10 +301,13 @@ export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [title, setTitle] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null)
   const [addError, setAddError] = useState('')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(true)
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
+
+  const { permission, requestPermission } = useNotifications()
 
   // ── Fetch todos ──────────────────────────────────────────────────────────
 
@@ -310,11 +341,16 @@ export default function HomePage() {
       const todo = await apiFetch<Todo>('/api/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), due_date: due }),
+        body: JSON.stringify({
+          title: title.trim(),
+          due_date: due,
+          reminder_minutes: dueDate ? reminderMinutes : null,
+        }),
       })
       setTodos((prev) => [...prev, todo])
       setTitle('')
       setDueDate('')
+      setReminderMinutes(null)
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add todo')
     } finally {
@@ -353,11 +389,16 @@ export default function HomePage() {
     id: number,
     newTitle: string,
     newDueDate: string | null,
+    newReminderMinutes: number | null,
   ) {
     const updated = await apiFetch<Todo>(`/api/todos/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle, due_date: newDueDate }),
+      body: JSON.stringify({
+        title: newTitle,
+        due_date: newDueDate,
+        reminder_minutes: newReminderMinutes,
+      }),
     })
     setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)))
   }
@@ -385,7 +426,21 @@ export default function HomePage() {
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-800">My Todos</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-800">My Todos</h1>
+        <button
+          onClick={requestPermission}
+          className={`text-xs px-3 py-1.5 rounded-full font-medium border ${
+            permission === 'granted'
+              ? 'bg-green-100 text-green-700 border-green-300'
+              : 'bg-orange-100 text-orange-700 border-orange-300 hover:bg-orange-200'
+          }`}
+          disabled={permission === 'denied'}
+          title={permission === 'denied' ? 'Notifications blocked in browser settings' : undefined}
+        >
+          {permission === 'granted' ? '🔔 Notifications on' : '🔔 Enable Notifications'}
+        </button>
+      </div>
 
       {/* Add form */}
       <form onSubmit={handleAdd} className="space-y-3">
@@ -412,10 +467,24 @@ export default function HomePage() {
         <input
           type="datetime-local"
           value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
+          onChange={(e) => {
+            setDueDate(e.target.value)
+            if (!e.target.value) setReminderMinutes(null)
+          }}
           min={getMinFutureDate()}
           className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+        <select
+          value={reminderMinutes ?? ''}
+          onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
+          disabled={!dueDate}
+          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <option value="">No reminder</option>
+          {REMINDER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
         {addError && <p className="text-red-600 text-sm">{addError}</p>}
       </form>
 

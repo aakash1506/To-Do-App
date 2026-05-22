@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { VALID_REMINDER_MINUTES } from '@/lib/reminders'
 
 /**
  * Validates that a datetime string is at least 1 minute in the future.
@@ -27,6 +28,11 @@ export const createTodoSchema = z.object({
     )
     .nullable()
     .optional(),
+
+  reminder_minutes: z
+    .union(VALID_REMINDER_MINUTES.map((v) => z.literal(v)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]])
+    .nullable()
+    .optional(),
 })
 
 export const updateTodoSchema = z.object({
@@ -47,6 +53,11 @@ export const updateTodoSchema = z.object({
       isAtLeastOneMinuteInFuture,
       'Due date must be at least 1 minute in the future',
     )
+    .nullable()
+    .optional(),
+
+  reminder_minutes: z
+    .union(VALID_REMINDER_MINUTES.map((v) => z.literal(v)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]])
     .nullable()
     .optional(),
 })
