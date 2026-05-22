@@ -25,6 +25,13 @@ async function addTodo(page: Page, title: string, dueDate?: string) {
   await expect(page.getByText(title).first()).toBeVisible()
 }
 
+async function createTag(page: Page, name: string, color = '#2563EB') {
+  await page.fill('input[placeholder="Tag name"]', name)
+  await page.fill('input[type="color"]', color)
+  await page.click('button:has-text("Add Tag")')
+  await expect(page.getByText(name).first()).toBeVisible()
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Feature 01 — Todo CRUD Operations', () => {
@@ -167,5 +174,20 @@ test.describe('Feature 01 — Todo CRUD Operations', () => {
     await row.getByRole('button', { name: 'Delete todo' }).click()
 
     await expect(page.getByText(title)).toBeVisible()
+  })
+
+  test('creates and filters by tag', async ({ page }) => {
+    const tagName = `Work ${Date.now()}`
+    const title = `Tagged ${Date.now()}`
+
+    await createTag(page, tagName)
+    await page.fill('input[placeholder="What needs to be done?"]', title)
+    await page.click(`button:has-text("${tagName}")`)
+    await page.click('button[type="submit"]:has-text("Add")')
+
+    await expect(page.getByText(title).first()).toBeVisible()
+    await page.click('button:has-text("All")')
+    await page.click(`button:has-text("${tagName}")`)
+    await expect(page.getByText(title).first()).toBeVisible()
   })
 })

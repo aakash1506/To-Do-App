@@ -29,12 +29,16 @@ export async function POST(request: NextRequest) {
       title: parsed.data.title,
       priority: parsed.data.priority,
       due_date: parsed.data.due_date ?? null,
-      reminder_minutes: parsed.data.reminder_minutes ?? null,
+      tag_ids: parsed.data.tag_ids,
       user_id: 1,
     })
 
     return NextResponse.json(todo, { status: 201 })
   } catch (error) {
+    if (error instanceof Error && /One or more tags do not exist/i.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+
     console.error('POST /api/todos error:', error)
     return NextResponse.json(
       { error: 'Failed to create todo' },

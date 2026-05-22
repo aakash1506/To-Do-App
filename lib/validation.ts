@@ -31,9 +31,8 @@ export const createTodoSchema = z.object({
     .nullable()
     .optional(),
 
-  reminder_minutes: z
-    .union(VALID_REMINDER_MINUTES.map((v) => z.literal(v)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]])
-    .nullable()
+  tag_ids: z
+    .array(z.number().int().positive('Tag id must be a positive integer'))
     .optional(),
 })
 
@@ -60,11 +59,40 @@ export const updateTodoSchema = z.object({
     .nullable()
     .optional(),
 
-  reminder_minutes: z
-    .union(VALID_REMINDER_MINUTES.map((v) => z.literal(v)) as [z.ZodLiteral<number>, ...z.ZodLiteral<number>[]])
-    .nullable()
+  tag_ids: z
+    .array(z.number().int().positive('Tag id must be a positive integer'))
+    .optional(),
+})
+
+export const createTagSchema = z.object({
+  name: z
+    .string({ required_error: 'Tag name is required' })
+    .min(1, 'Tag name is required')
+    .max(50, 'Tag name is too long (max 50 characters)')
+    .transform((s) => s.trim())
+    .refine((s) => s.length > 0, 'Tag name is required'),
+
+  color: z
+    .string({ required_error: 'Tag color is required' })
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Tag color must be a valid hex color like #2563EB'),
+})
+
+export const updateTagSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Tag name is required')
+    .max(50, 'Tag name is too long (max 50 characters)')
+    .transform((s) => s.trim())
+    .refine((s) => s.length > 0, 'Tag name is required')
+    .optional(),
+
+  color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Tag color must be a valid hex color like #2563EB')
     .optional(),
 })
 
 export type CreateTodoInput = z.infer<typeof createTodoSchema>
 export type UpdateTodoInput = z.infer<typeof updateTodoSchema>
+export type CreateTagInput = z.infer<typeof createTagSchema>
+export type UpdateTagInput = z.infer<typeof updateTagSchema>

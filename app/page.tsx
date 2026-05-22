@@ -4,7 +4,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNotifications } from '@/lib/hooks/useNotifications'
 import { REMINDER_OPTIONS, formatReminderBadge } from '@/lib/reminders'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Types
+
+interface Tag {
+  id: number
+  name: string
+  color: string
+}
 
 interface Todo {
   id: number
@@ -15,16 +21,13 @@ interface Todo {
   reminder_minutes: number | null
   created_at: string
   updated_at: string
+  tags: Tag[]
 }
 
-type Priority = 'high' | 'medium' | 'low'
-const PRIORITIES: Priority[] = ['high', 'medium', 'low']
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function getMinFutureDate(): string {
-  const now = new Date(Date.now() + 2 * 60 * 1000) // 2 min from now
-  // Format: YYYY-MM-DDTHH:mm (required by datetime-local input)
+  const now = new Date(Date.now() + 2 * 60 * 1000)
   return now.toISOString().slice(0, 16)
 }
 
@@ -42,43 +45,18 @@ function isOverdue(todo: Todo): boolean {
   return new Date(todo.due_date).getTime() < Date.now()
 }
 
-function getPriorityRank(priority: Priority): number {
-  if (priority === 'high') return 0
-  if (priority === 'medium') return 1
-  return 2
+function getTagTextColor(backgroundHex: string): string {
+  const cleaned = backgroundHex.replace('#', '')
+  const r = parseInt(cleaned.slice(0, 2), 16)
+  const g = parseInt(cleaned.slice(2, 4), 16)
+  const b = parseInt(cleaned.slice(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.6 ? '#1F2937' : '#FFFFFF'
 }
 
-function sortByPriorityThenDueDate(a: Todo, b: Todo): number {
-  const priorityDiff = getPriorityRank(a.priority) - getPriorityRank(b.priority)
-  if (priorityDiff !== 0) return priorityDiff
+// API helpers
 
-  if (!a.due_date && !b.due_date) {
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  }
-  if (!a.due_date) return 1
-  if (!b.due_date) return -1
-
-  const dueDiff = new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
-  if (dueDiff !== 0) return dueDiff
-
-  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-}
-
-function toPriority(value: string): Priority {
-  return PRIORITIES.includes(value as Priority) ? (value as Priority) : 'medium'
-}
-
-function toPriorityFilter(value: string): 'all' | Priority {
-  if (value === 'all') return 'all'
-  return toPriority(value)
-}
-
-// ─── API helpers ──────────────────────────────────────────────────────────────
-
-async function apiFetch<T>(
-  url: string,
-  options?: RequestInit,
-): Promise<T> {
+async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options)
   if (res.status === 204) return undefined as T
   const data = await res.json()
@@ -86,41 +64,87 @@ async function apiFetch<T>(
   return data as T
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// Sub-components
 
-function DueDateBadge({ dateStr }: { dateStr: string }) {
-  const overdue = new Date(dateStr).getTime() < Date.now()
+function TagChip({ tag }: { tag: Tag }) {
   return (
     <span
-      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-        overdue ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-      }`}
+      className="inline-flex items-center text-xs px-2 py-0.5 rounded-full font-medium"
+      style={{
+        backgroundColor: tag.color,
+        color: getTagTextColor(tag.color),
+      }}
     >
-      {overdue ? '⚠ ' : ''}
-      {formatDueDate(dateStr)}
+      {tag.name}
     </span>
+  )
+}
+
+interface TagSelectorProps {
+  tags: Tag[]
+  selectedTagIds: number[]
+  onChange: (next: number[]) => void
+}
+
+function TagSelector({ tags, selectedTagIds, onChange }: TagSelectorProps) {
+  function toggleTag(id: number) {
+    const next = selectedTagIds.includes(id)
+      ? selectedTagIds.filter((tagId) => tagId !== id)
+      : [...selectedTagIds, id]
+    onChange(next)
+  }
+
+  if (tags.length === 0) {
+    return <p className="text-xs text-gray-500">No tags yet</p>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tags.map((tag) => {
+        const active = selectedTagIds.includes(tag.id)
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            onClick={() => toggleTag(tag.id)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+              active ? 'border-transparent ring-2 ring-offset-1' : 'border-gray-300'
+            }`}
+            style={{
+              backgroundColor: active ? tag.color : '#FFFFFF',
+              color: active ? getTagTextColor(tag.color) : '#374151',
+              boxShadow: active ? `0 0 0 2px ${tag.color}` : 'none',
+            }}
+          >
+            {tag.name}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
 interface EditModalProps {
   todo: Todo
+  availableTags: Tag[]
   onClose: () => void
   onSave: (
     id: number,
     title: string,
     due_date: string | null,
-    priority: Priority,
-    reminder_minutes: number | null,
+    tag_ids: number[],
   ) => Promise<void>
 }
 
-function EditModal({ todo, onClose, onSave }: EditModalProps) {
+function EditModal({ todo, availableTags, onClose, onSave }: EditModalProps) {
   const [title, setTitle] = useState(todo.title)
   const [priority, setPriority] = useState<Priority>(todo.priority)
   const [dueDate, setDueDate] = useState(
     todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : '',
   )
-  const [reminderMinutes, setReminderMinutes] = useState<number | null>(todo.reminder_minutes)
+  const [selectedTagIds, setSelectedTagIds] = useState(
+    todo.tags.map((tag) => tag.id),
+  )
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -132,11 +156,8 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
     }
     setSaving(true)
     try {
-      const due =
-        dueDate
-          ? new Date(dueDate).toISOString()
-          : null
-      await onSave(todo.id, title.trim(), due, priority, dueDate ? reminderMinutes : null)
+      const due = dueDate ? new Date(dueDate).toISOString() : null
+      await onSave(todo.id, title.trim(), due, selectedTagIds)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -192,21 +213,13 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Reminder (optional)
-            </label>
-            <select
-              value={reminderMinutes ?? ''}
-              onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
-              disabled={!dueDate}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <option value="">No reminder</option>
-              {REMINDER_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+          <div className="space-y-2">
+            <p className="block text-sm font-medium text-gray-700">Tags</p>
+            <TagSelector
+              tags={availableTags}
+              selectedTagIds={selectedTagIds}
+              onChange={setSelectedTagIds}
+            />
           </div>
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <div className="flex gap-2 justify-end">
@@ -222,7 +235,7 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               disabled={saving}
               className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </form>
@@ -270,7 +283,7 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
         className="mt-1 h-4 w-4 rounded border-gray-300 accent-blue-600 cursor-pointer"
         aria-label={`Mark "${todo.title}" as ${todo.completed ? 'incomplete' : 'complete'}`}
       />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-2">
         <p
           className={`text-sm font-medium break-words ${
             todo.completed ? 'line-through text-gray-400' : 'text-gray-800'
@@ -295,6 +308,13 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
             )}
           </div>
         )}
+        {todo.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {todo.tags.map((tag) => (
+              <TagChip key={tag.id} tag={tag} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex gap-1 shrink-0">
         <button
@@ -310,10 +330,24 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
           className="text-xs px-2 py-1 rounded border border-red-200 hover:bg-red-50 text-red-600 disabled:opacity-50"
           aria-label="Delete todo"
         >
-          {deleting ? '…' : 'Delete'}
+          {deleting ? '...' : 'Delete'}
         </button>
       </div>
     </div>
+  )
+}
+
+function DueDateBadge({ dateStr }: { dateStr: string }) {
+  const overdue = new Date(dateStr).getTime() < Date.now()
+  return (
+    <span
+      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+        overdue ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+      }`}
+    >
+      {overdue ? '⚠ ' : ''}
+      {formatDueDate(dateStr)}
+    </span>
   )
 }
 
@@ -364,40 +398,48 @@ function Section({
   )
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// Main page
 
 export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
   const [priorityFilter, setPriorityFilter] = useState<'all' | Priority>('all')
   const [dueDate, setDueDate] = useState('')
-  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null)
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([])
+  const [selectedTagFilter, setSelectedTagFilter] = useState<number | null>(null)
+  const [newTagName, setNewTagName] = useState('')
+  const [newTagColor, setNewTagColor] = useState('#2563EB')
+  const [tagError, setTagError] = useState('')
   const [addError, setAddError] = useState('')
   const [adding, setAdding] = useState(false)
+  const [creatingTag, setCreatingTag] = useState(false)
   const [loading, setLoading] = useState(true)
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
 
-  const { permission, requestPermission } = useNotifications()
-
-  // ── Fetch todos ──────────────────────────────────────────────────────────
-
   const fetchTodos = useCallback(async () => {
-    try {
-      const data = await apiFetch<{ todos: Todo[] }>('/api/todos')
-      setTodos(data.todos)
-    } catch {
-      // silently ignore
-    } finally {
-      setLoading(false)
-    }
+    const data = await apiFetch<{ todos: Todo[] }>('/api/todos')
+    setTodos(data.todos)
+  }, [])
+
+  const fetchTags = useCallback(async () => {
+    const data = await apiFetch<{ tags: Tag[] }>('/api/tags')
+    setTags(data.tags)
   }, [])
 
   useEffect(() => {
-    fetchTodos()
-  }, [fetchTodos])
-
-  // ── Create todo ──────────────────────────────────────────────────────────
+    async function bootstrap() {
+      try {
+        await Promise.all([fetchTodos(), fetchTags()])
+      } catch {
+        // Ignore load errors in MVP mode
+      } finally {
+        setLoading(false)
+      }
+    }
+    bootstrap()
+  }, [fetchTags, fetchTodos])
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -405,6 +447,7 @@ export default function HomePage() {
       setAddError('Title is required')
       return
     }
+
     setAdding(true)
     setAddError('')
     try {
@@ -414,16 +457,15 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim(),
-          priority,
           due_date: due,
-          reminder_minutes: dueDate ? reminderMinutes : null,
+          tag_ids: selectedTagIds,
         }),
       })
       setTodos((prev) => [...prev, todo])
       setTitle('')
       setPriority('medium')
       setDueDate('')
-      setReminderMinutes(null)
+      setSelectedTagIds([])
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add todo')
     } finally {
@@ -431,13 +473,89 @@ export default function HomePage() {
     }
   }
 
-  // ── Toggle completion ────────────────────────────────────────────────────
+  async function handleCreateTag(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newTagName.trim()) {
+      setTagError('Tag name is required')
+      return
+    }
+
+    setTagError('')
+    setCreatingTag(true)
+    try {
+      const tag = await apiFetch<Tag>('/api/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newTagName.trim(),
+          color: newTagColor,
+        }),
+      })
+      setTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewTagName('')
+      setNewTagColor('#2563EB')
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : 'Failed to create tag')
+    } finally {
+      setCreatingTag(false)
+    }
+  }
+
+  async function handleDeleteTag(id: number, name: string) {
+    if (!window.confirm(`Delete tag "${name}"?`)) return
+
+    try {
+      await apiFetch(`/api/tags/${id}`, { method: 'DELETE' })
+      setTags((prev) => prev.filter((tag) => tag.id !== id))
+      setSelectedTagIds((prev) => prev.filter((tagId) => tagId !== id))
+      setSelectedTagFilter((prev) => (prev === id ? null : prev))
+      setTodos((prev) =>
+        prev.map((todo) => ({
+          ...todo,
+          tags: todo.tags.filter((tag) => tag.id !== id),
+        })),
+      )
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : 'Failed to delete tag')
+    }
+  }
+
+  async function handleEditTag(tag: Tag) {
+    const name = window.prompt('Update tag name', tag.name)
+    if (name === null) return
+
+    const color = window.prompt('Update tag color (hex like #22C55E)', tag.color)
+    if (color === null) return
+
+    try {
+      const updated = await apiFetch<Tag>(`/api/tags/${tag.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), color: color.trim() }),
+      })
+
+      setTags((prev) =>
+        prev
+          .map((existing) => (existing.id === updated.id ? updated : existing))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      )
+      setTodos((prev) =>
+        prev.map((todo) => ({
+          ...todo,
+          tags: todo.tags.map((existing) =>
+            existing.id === updated.id ? updated : existing,
+          ),
+        })),
+      )
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : 'Failed to update tag')
+    }
+  }
 
   async function handleToggle(id: number, currentCompleted: boolean) {
-    // Optimistic update
     setTodos((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, completed: !currentCompleted } : t,
+      prev.map((todo) =>
+        todo.id === id ? { ...todo, completed: !currentCompleted } : todo,
       ),
     )
     try {
@@ -447,68 +565,51 @@ export default function HomePage() {
         body: JSON.stringify({ completed: !currentCompleted }),
       })
     } catch {
-      // Rollback on error
       setTodos((prev) =>
-        prev.map((t) =>
-          t.id === id ? { ...t, completed: currentCompleted } : t,
+        prev.map((todo) =>
+          todo.id === id ? { ...todo, completed: currentCompleted } : todo,
         ),
       )
     }
   }
 
-  // ── Update todo ──────────────────────────────────────────────────────────
-
   async function handleSaveEdit(
     id: number,
     newTitle: string,
     newDueDate: string | null,
-    newPriority: Priority,
-    newReminderMinutes: number | null,
+    tag_ids: number[],
   ) {
     const updated = await apiFetch<Todo>(`/api/todos/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: newTitle,
-        due_date: newDueDate,
-        priority: newPriority,
-        reminder_minutes: newReminderMinutes,
-      }),
+      body: JSON.stringify({ title: newTitle, due_date: newDueDate, tag_ids }),
     })
-    setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)))
+    setTodos((prev) => prev.map((todo) => (todo.id === id ? updated : todo)))
   }
 
-  // ── Delete todo ──────────────────────────────────────────────────────────
-
   async function handleDelete(id: number) {
-    // Optimistic remove
-    setTodos((prev) => prev.filter((t) => t.id !== id))
+    setTodos((prev) => prev.filter((todo) => todo.id !== id))
     try {
       await apiFetch(`/api/todos/${id}`, { method: 'DELETE' })
     } catch {
-      // Refetch on error
-      fetchTodos()
+      try {
+        await fetchTodos()
+      } catch {
+        // Ignore fallback error
+      }
     }
   }
 
-  // ── Derived lists ────────────────────────────────────────────────────────
+  const filteredTodos =
+    selectedTagFilter === null
+      ? todos
+      : todos.filter((todo) => todo.tags.some((tag) => tag.id === selectedTagFilter))
 
-  const priorityFilteredTodos = todos.filter((t) => {
-    if (priorityFilter === 'all') return true
-    return t.priority === priorityFilter
-  })
-
-  const overdueTodos = priorityFilteredTodos
-    .filter((t) => isOverdue(t))
-    .sort(sortByPriorityThenDueDate)
-  const activeTodos = priorityFilteredTodos
-    .filter((t) => !t.completed && !isOverdue(t))
-    .sort(sortByPriorityThenDueDate)
-  const completedTodos = priorityFilteredTodos
-    .filter((t) => t.completed)
-    .sort(sortByPriorityThenDueDate)
-
-  // ── Render ───────────────────────────────────────────────────────────────
+  const overdueTodos = filteredTodos.filter((todo) => isOverdue(todo))
+  const activeTodos = filteredTodos.filter(
+    (todo) => !todo.completed && !isOverdue(todo),
+  )
+  const completedTodos = filteredTodos.filter((todo) => todo.completed)
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-8 space-y-8">
@@ -528,7 +629,108 @@ export default function HomePage() {
         </button>
       </div>
 
-      {/* Add form */}
+      <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
+          Manage Tags
+        </h2>
+        <form onSubmit={handleCreateTag} className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newTagName}
+              onChange={(e) => {
+                setNewTagName(e.target.value)
+                if (tagError) setTagError('')
+              }}
+              placeholder="Tag name"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              maxLength={50}
+            />
+            <input
+              type="color"
+              value={newTagColor}
+              onChange={(e) => setNewTagColor(e.target.value)}
+              className="h-10 w-14 rounded border border-gray-300 bg-white"
+              aria-label="Select tag color"
+            />
+            <button
+              type="submit"
+              disabled={creatingTag}
+              className="px-3 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800 disabled:opacity-50"
+            >
+              {creatingTag ? 'Adding...' : 'Add Tag'}
+            </button>
+          </div>
+          {tagError && <p className="text-red-600 text-sm">{tagError}</p>}
+        </form>
+
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {tags.map((tag) => (
+              <div
+                key={tag.id}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-1"
+              >
+                <TagChip tag={tag} />
+                <button
+                  type="button"
+                  onClick={() => handleEditTag(tag)}
+                  className="rounded px-1 text-xs text-gray-600 hover:bg-white"
+                  aria-label={`Edit tag ${tag.name}`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTag(tag.id, tag.name)}
+                  className="rounded px-1 text-xs text-red-600 hover:bg-white"
+                  aria-label={`Delete tag ${tag.name}`}
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2 rounded-xl border border-gray-200 bg-white p-4">
+        <p className="text-sm font-semibold uppercase tracking-wide text-gray-600">
+          Filter By Tag
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedTagFilter(null)}
+            className={`rounded-full px-3 py-1 text-xs font-medium border ${
+              selectedTagFilter === null
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-700 border-gray-300'
+            }`}
+          >
+            All
+          </button>
+          {tags.map((tag) => {
+            const active = selectedTagFilter === tag.id
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() => setSelectedTagFilter(tag.id)}
+                className="rounded-full px-3 py-1 text-xs font-medium border"
+                style={{
+                  borderColor: active ? tag.color : '#D1D5DB',
+                  backgroundColor: active ? tag.color : '#FFFFFF',
+                  color: active ? getTagTextColor(tag.color) : '#374151',
+                }}
+              >
+                {tag.name}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
       <form onSubmit={handleAdd} className="space-y-3">
         <div className="flex gap-2">
           <input
@@ -547,68 +749,32 @@ export default function HomePage() {
             disabled={adding}
             className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {adding ? 'Adding…' : 'Add'}
+            {adding ? 'Adding...' : 'Add'}
           </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <select
-            value={priority}
-            onChange={(e) => setPriority(toPriority(e.target.value))}
-            className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            aria-label="Priority"
-          >
-            <option value="high">High priority</option>
-            <option value="medium">Medium priority</option>
-            <option value="low">Low priority</option>
-          </select>
-          <input
-            type="datetime-local"
-            value={dueDate}
-            onChange={(e) => {
-              setDueDate(e.target.value)
-              if (!e.target.value) setReminderMinutes(null)
-            }}
-            min={getMinFutureDate()}
-            className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <input
+          type="datetime-local"
+          value={dueDate}
+          onChange={(e) => setDueDate(e.target.value)}
+          min={getMinFutureDate()}
+          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Assign Tags</p>
+          <TagSelector
+            tags={tags}
+            selectedTagIds={selectedTagIds}
+            onChange={setSelectedTagIds}
           />
         </div>
-        <select
-          value={reminderMinutes ?? ''}
-          onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
-          disabled={!dueDate}
-          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <option value="">No reminder</option>
-          {REMINDER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
         {addError && <p className="text-red-600 text-sm">{addError}</p>}
       </form>
 
-      <div className="flex items-center gap-2">
-        <label htmlFor="priority-filter" className="text-sm text-gray-600">
-          Filter priority
-        </label>
-        <select
-          id="priority-filter"
-          value={priorityFilter}
-          onChange={(e) => setPriorityFilter(toPriorityFilter(e.target.value))}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="all">All</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-      </div>
-
-      {/* Todo lists */}
       {loading ? (
-        <p className="text-gray-500 text-sm">Loading…</p>
-      ) : todos.length === 0 ? (
+        <p className="text-gray-500 text-sm">Loading...</p>
+      ) : filteredTodos.length === 0 ? (
         <p className="text-gray-400 text-sm text-center py-8">
-          No todos yet. Add one above!
+          No todos match this filter.
         </p>
       ) : (
         <div className="space-y-6">
@@ -655,10 +821,10 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Edit modal */}
       {editingTodo && (
         <EditModal
           todo={editingTodo}
+          availableTags={tags}
           onClose={() => setEditingTodo(null)}
           onSave={handleSaveEdit}
         />

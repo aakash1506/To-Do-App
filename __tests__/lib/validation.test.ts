@@ -1,4 +1,9 @@
-import { createTodoSchema, updateTodoSchema } from '@/lib/validation'
+import {
+  createTagSchema,
+  createTodoSchema,
+  updateTagSchema,
+  updateTodoSchema,
+} from '@/lib/validation'
 
 const futureDate = () =>
   new Date(Date.now() + 2 * 60 * 1000).toISOString() // 2 min from now
@@ -92,31 +97,14 @@ describe('createTodoSchema', () => {
     })
   })
 
-  describe('priority validation', () => {
-    it('accepts high priority', () => {
-      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'high' })
-      expect(result.success).toBe(true)
-      if (result.success) expect(result.data.priority).toBe('high')
-    })
-
-    it('accepts medium priority', () => {
-      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'medium' })
+  describe('tag_ids validation', () => {
+    it('accepts valid positive integer tag ids', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', tag_ids: [1, 2] })
       expect(result.success).toBe(true)
     })
 
-    it('accepts low priority', () => {
-      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'low' })
-      expect(result.success).toBe(true)
-    })
-
-    it('defaults to medium when priority is omitted', () => {
-      const result = createTodoSchema.safeParse({ title: 'Task' })
-      expect(result.success).toBe(true)
-      if (result.success) expect(result.data.priority).toBe('medium')
-    })
-
-    it('rejects an invalid priority value', () => {
-      const result = createTodoSchema.safeParse({ title: 'Task', priority: 'urgent' })
+    it('rejects zero and negative tag ids', () => {
+      const result = createTodoSchema.safeParse({ title: 'Task', tag_ids: [0, -1] })
       expect(result.success).toBe(false)
     })
   })
@@ -160,13 +148,42 @@ describe('updateTodoSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('accepts priority update', () => {
-    const result = updateTodoSchema.safeParse({ priority: 'high' })
+  it('accepts updating tag_ids', () => {
+    const result = updateTodoSchema.safeParse({ tag_ids: [1, 2, 3] })
     expect(result.success).toBe(true)
   })
 
-  it('rejects invalid priority update', () => {
-    const result = updateTodoSchema.safeParse({ priority: 'critical' })
+  it('rejects invalid tag_ids on update', () => {
+    const result = updateTodoSchema.safeParse({ tag_ids: [1, -2] })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('createTagSchema', () => {
+  it('accepts valid tag payload', () => {
+    const result = createTagSchema.safeParse({ name: 'Urgent', color: '#EF4444' })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects empty name', () => {
+    const result = createTagSchema.safeParse({ name: '   ', color: '#EF4444' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects invalid color', () => {
+    const result = createTagSchema.safeParse({ name: 'Urgent', color: 'red' })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('updateTagSchema', () => {
+  it('accepts partial update', () => {
+    const result = updateTagSchema.safeParse({ color: '#22C55E' })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects invalid color', () => {
+    const result = updateTagSchema.safeParse({ color: '#XYZ123' })
     expect(result.success).toBe(false)
   })
 })
