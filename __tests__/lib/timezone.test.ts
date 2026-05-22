@@ -1,4 +1,5 @@
 import {
+  calculateNextDueDate,
   getSingaporeNow,
   toSingaporeISO,
   isFutureDate,
@@ -92,5 +93,53 @@ describe('parseSingaporeDate', () => {
 
   it('throws for an invalid date string', () => {
     expect(() => parseSingaporeDate('not-a-date')).toThrow('Invalid date string')
+  })
+})
+
+describe('calculateNextDueDate', () => {
+  it('adds one day for daily recurrence', () => {
+    const next = calculateNextDueDate(
+      '2026-05-22T09:00:00+08:00',
+      'daily',
+    )
+    expect(next).toBe('2026-05-23T09:00:00+08:00')
+  })
+
+  it('adds seven days for weekly recurrence', () => {
+    const next = calculateNextDueDate(
+      '2026-05-22T09:00:00+08:00',
+      'weekly',
+    )
+    expect(next).toBe('2026-05-29T09:00:00+08:00')
+  })
+
+  it('clamps monthly recurrence to end-of-month', () => {
+    const next = calculateNextDueDate(
+      '2099-01-31T18:30:00+08:00',
+      'monthly',
+    )
+    expect(next).toBe('2099-02-28T18:30:00+08:00')
+  })
+
+  it('keeps day when target month has that day', () => {
+    const next = calculateNextDueDate(
+      '2099-03-30T08:15:00+08:00',
+      'monthly',
+    )
+    expect(next).toBe('2099-04-30T08:15:00+08:00')
+  })
+
+  it('clamps yearly recurrence for leap-day dates', () => {
+    const next = calculateNextDueDate(
+      '2400-02-29T10:00:00+08:00',
+      'yearly',
+    )
+    expect(next).toBe('2401-02-28T10:00:00+08:00')
+  })
+
+  it('throws for invalid source date', () => {
+    expect(() =>
+      calculateNextDueDate('not-a-date', 'daily'),
+    ).toThrow(/invalid date string/i)
   })
 })

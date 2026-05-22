@@ -31,6 +31,8 @@ describe('todoDB', () => {
       expect(todo.title).toBe('Buy groceries')
       expect(todo.completed).toBe(false)
       expect(todo.due_date).toBeNull()
+      expect(todo.is_recurring).toBe(false)
+      expect(todo.recurrence_pattern).toBeNull()
       expect(todo.user_id).toBe(1)
       expect(todo.created_at).toBeTruthy()
       expect(todo.updated_at).toBeTruthy()
@@ -46,6 +48,18 @@ describe('todoDB', () => {
     it('creates a todo with a specific user_id', () => {
       const todo = todoDB.create({ title: 'User 2 task', user_id: 2 })
       expect(todo.user_id).toBe(2)
+    })
+
+    it('creates a recurring todo', () => {
+      const todo = todoDB.create({
+        title: 'Weekly review',
+        due_date: '2026-05-22T09:00:00+08:00',
+        is_recurring: true,
+        recurrence_pattern: 'weekly',
+      })
+
+      expect(todo.is_recurring).toBe(true)
+      expect(todo.recurrence_pattern).toBe('weekly')
     })
 
     it('returns the todo with completed: false by default', () => {
@@ -159,6 +173,34 @@ describe('todoDB', () => {
       expect(updated!.due_date).toBe(newDate)
     })
 
+    it('updates recurrence settings', () => {
+      const todo = todoDB.create({ title: 'Task', due_date: '2026-05-22T09:00:00+08:00' })
+      const updated = todoDB.update(todo.id, {
+        is_recurring: true,
+        recurrence_pattern: 'monthly',
+      })
+
+      expect(updated!.is_recurring).toBe(true)
+      expect(updated!.recurrence_pattern).toBe('monthly')
+    })
+
+    it('can disable recurrence settings', () => {
+      const todo = todoDB.create({
+        title: 'Task',
+        due_date: '2026-05-22T09:00:00+08:00',
+        is_recurring: true,
+        recurrence_pattern: 'daily',
+      })
+
+      const updated = todoDB.update(todo.id, {
+        is_recurring: false,
+        recurrence_pattern: null,
+      })
+
+      expect(updated!.is_recurring).toBe(false)
+      expect(updated!.recurrence_pattern).toBeNull()
+    })
+
     it('clears due_date when set to null', () => {
       const dueDate = new Date(Date.now() + 60 * 60 * 1000).toISOString()
       const todo = todoDB.create({ title: 'Task', due_date: dueDate })
@@ -175,6 +217,63 @@ describe('todoDB', () => {
       const todo = todoDB.create({ title: 'User 2 task', user_id: 2 })
       const result = todoDB.update(todo.id, { title: 'Hacked' }, 1)
       expect(result).toBeNull()
+    })
+  })
+
+  // ── updateWithRecurring ────────────────────────────────────────────────────
+
+  describe('updateWithRecurring', () => {
+    it('creates the next instance when a recurring todo is completed', () => {
+      const todo = todoDB.create({
+        title: 'Daily habit',
+        due_date: '2026-05-22T09:00:00+08:00',
+        is_recurring: true,
+        recurrence_pattern: 'daily',
+      })
+
+      const result = todoDB.updateWithRecurring(todo.id, { completed: true })
+
+      expect(result).not.toBeNull()
+      expect(result!.todo.completed).toBe(true)
+      expect(result!.next_instance).not.toBeNull()
+      expect(result!.next_instance!.id).not.toBe(todo.id)
+      expect(result!.next_instance!.title).toBe(todo.title)
+      expect(result!.next_instance!.completed).toBe(false)
+      expect(result!.next_instance!.due_date).toBe('2026-05-23T09:00:00+08:00')
+      expect(result!.next_instance!.is_recurring).toBe(true)
+      expect(result!.next_instance!.recurrence_pattern).toBe('daily')
+    })
+
+    it('does not create duplicate next instance when already completed', () => {
+      const todo = todoDB.create({
+        title: 'Daily habit',
+        due_date: '2026-05-22T09:00:00+08:00',
+        is_recurring: true,
+        recurrence_pattern: 'daily',
+      })
+
+      const first = todoDB.updateWithRecurring(todo.id, { completed: true })
+      const second = todoDB.updateWithRecurring(todo.id, { completed: true })
+
+      expect(first).not.toBeNull()
+      expect(first!.next_instance).not.toBeNull()
+      expect(second).not.toBeNull()
+      expect(second!.next_instance).toBeNull()
+
+      const all = todoDB.findAll()
+      expect(all).toHaveLength(2)
+    })
+
+    it('does not create next instance for non-recurring todo completion', () => {
+      const todo = todoDB.create({
+        title: 'One-time task',
+        due_date: '2026-05-22T09:00:00+08:00',
+      })
+
+      const result = todoDB.updateWithRecurring(todo.id, { completed: true })
+      expect(result).not.toBeNull()
+      expect(result!.next_instance).toBeNull()
+      expect(todoDB.findAll()).toHaveLength(1)
     })
   })
 

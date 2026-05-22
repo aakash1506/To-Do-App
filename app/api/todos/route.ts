@@ -28,6 +28,8 @@ export async function POST(request: NextRequest) {
     const todo = todoDB.create({
       title: parsed.data.title,
       due_date: parsed.data.due_date ?? null,
+      is_recurring: parsed.data.is_recurring ?? false,
+      recurrence_pattern: parsed.data.recurrence_pattern ?? null,
       user_id: 1,
     })
 

@@ -4,13 +4,23 @@ import { useState, useEffect, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly'
+
 interface Todo {
   id: number
+  user_id: number
   title: string
   completed: boolean
   due_date: string | null
+  is_recurring: boolean
+  recurrence_pattern: RecurrencePattern | null
   created_at: string
   updated_at: string
+}
+
+interface UpdateTodoResponse {
+  todo: Todo
+  next_instance: Todo | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -64,16 +74,34 @@ function DueDateBadge({ dateStr }: { dateStr: string }) {
   )
 }
 
+function RecurrenceBadge({ pattern }: { pattern: RecurrencePattern }) {
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-violet-100 text-violet-700 border border-violet-200">
+      🔄 {pattern}
+    </span>
+  )
+}
+
 interface EditModalProps {
   todo: Todo
   onClose: () => void
-  onSave: (id: number, title: string, due_date: string | null) => Promise<void>
+  onSave: (
+    id: number,
+    title: string,
+    due_date: string | null,
+    is_recurring: boolean,
+    recurrence_pattern: RecurrencePattern | null,
+  ) => Promise<void>
 }
 
 function EditModal({ todo, onClose, onSave }: EditModalProps) {
   const [title, setTitle] = useState(todo.title)
   const [dueDate, setDueDate] = useState(
     todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : '',
+  )
+  const [isRecurring, setIsRecurring] = useState(todo.is_recurring)
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern | ''>(
+    todo.recurrence_pattern ?? '',
   )
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -84,13 +112,37 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
       setError('Title is required')
       return
     }
+
+    if (isRecurring && !dueDate) {
+      setError('Recurring todos require a due date')
+      return
+    }
+
+    if (isRecurring && !recurrencePattern) {
+      setError('Recurrence pattern is required')
+      return
+    }
+
     setSaving(true)
     try {
       const due =
         dueDate
           ? new Date(dueDate).toISOString()
           : null
-      await onSave(todo.id, title.trim(), due)
+
+      let normalizedPattern: RecurrencePattern | null = null
+      if (isRecurring) {
+        // Safe after validation checks above.
+        normalizedPattern = recurrencePattern as RecurrencePattern
+      }
+
+      await onSave(
+        todo.id,
+        title.trim(),
+        due,
+        isRecurring,
+        normalizedPattern,
+      )
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -128,6 +180,36 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               min={getMinFutureDate()}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div className="space-y-2">
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={isRecurring}
+                onChange={(e) => {
+                  const nextValue = e.target.checked
+                  setIsRecurring(nextValue)
+                  if (!nextValue) {
+                    setRecurrencePattern('')
+                  }
+                }}
+                className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+              />
+              Repeat
+            </label>
+
+            <select
+              value={recurrencePattern}
+              onChange={(e) => setRecurrencePattern(e.target.value as RecurrencePattern | '')}
+              disabled={!isRecurring}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              <option value="">Select recurrence pattern</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
           </div>
           {error && <p className="text-red-600 text-sm">{error}</p>}
           <div className="flex gap-2 justify-end">
@@ -193,11 +275,12 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
         >
           {todo.title}
         </p>
-        {todo.due_date && (
-          <div className="mt-1">
-            <DueDateBadge dateStr={todo.due_date} />
-          </div>
-        )}
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {todo.is_recurring && todo.recurrence_pattern && (
+            <RecurrenceBadge pattern={todo.recurrence_pattern} />
+          )}
+          {todo.due_date && <DueDateBadge dateStr={todo.due_date} />}
+        </div>
       </div>
       <div className="flex gap-1 shrink-0">
         <button
@@ -273,6 +356,8 @@ export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [title, setTitle] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [isRecurring, setIsRecurring] = useState(false)
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern | ''>('')
   const [addError, setAddError] = useState('')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -303,6 +388,17 @@ export default function HomePage() {
       setAddError('Title is required')
       return
     }
+
+    if (isRecurring && !dueDate) {
+      setAddError('Recurring todos require a due date')
+      return
+    }
+
+    if (isRecurring && !recurrencePattern) {
+      setAddError('Recurrence pattern is required')
+      return
+    }
+
     setAdding(true)
     setAddError('')
     try {
@@ -310,11 +406,18 @@ export default function HomePage() {
       const todo = await apiFetch<Todo>('/api/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), due_date: due }),
+        body: JSON.stringify({
+          title: title.trim(),
+          due_date: due,
+          is_recurring: isRecurring,
+          recurrence_pattern: isRecurring ? recurrencePattern : null,
+        }),
       })
       setTodos((prev) => [...prev, todo])
       setTitle('')
       setDueDate('')
+      setIsRecurring(false)
+      setRecurrencePattern('')
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add todo')
     } finally {
@@ -332,10 +435,27 @@ export default function HomePage() {
       ),
     )
     try {
-      await apiFetch(`/api/todos/${id}`, {
+      const response = await apiFetch<UpdateTodoResponse>(`/api/todos/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: !currentCompleted }),
+      })
+
+      setTodos((prev) => {
+        const updatedTodos = prev.map((t) =>
+          t.id === id ? response.todo : t,
+        )
+
+        const nextInstance = response.next_instance
+        if (!nextInstance) {
+          return updatedTodos
+        }
+
+        if (updatedTodos.some((t) => t.id === nextInstance.id)) {
+          return updatedTodos
+        }
+
+        return [...updatedTodos, nextInstance]
       })
     } catch {
       // Rollback on error
@@ -353,13 +473,20 @@ export default function HomePage() {
     id: number,
     newTitle: string,
     newDueDate: string | null,
+    newIsRecurring: boolean,
+    newRecurrencePattern: RecurrencePattern | null,
   ) {
-    const updated = await apiFetch<Todo>(`/api/todos/${id}`, {
+    const response = await apiFetch<UpdateTodoResponse>(`/api/todos/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle, due_date: newDueDate }),
+      body: JSON.stringify({
+        title: newTitle,
+        due_date: newDueDate,
+        is_recurring: newIsRecurring,
+        recurrence_pattern: newRecurrencePattern,
+      }),
     })
-    setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)))
+    setTodos((prev) => prev.map((t) => (t.id === id ? response.todo : t)))
   }
 
   // ── Delete todo ──────────────────────────────────────────────────────────
@@ -412,10 +539,49 @@ export default function HomePage() {
         <input
           type="datetime-local"
           value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
+          onChange={(e) => {
+            setDueDate(e.target.value)
+            if (addError) setAddError('')
+          }}
           min={getMinFutureDate()}
           className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+
+        <div className="space-y-2">
+          <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={isRecurring}
+              onChange={(e) => {
+                const nextValue = e.target.checked
+                setIsRecurring(nextValue)
+                if (!nextValue) {
+                  setRecurrencePattern('')
+                }
+                if (addError) setAddError('')
+              }}
+              className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+            />
+            Repeat
+          </label>
+
+          <select
+            value={recurrencePattern}
+            onChange={(e) => {
+              setRecurrencePattern(e.target.value as RecurrencePattern | '')
+              if (addError) setAddError('')
+            }}
+            disabled={!isRecurring}
+            className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
+          >
+            <option value="">Select recurrence pattern</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+
         {addError && <p className="text-red-600 text-sm">{addError}</p>}
       </form>
 

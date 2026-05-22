@@ -18,7 +18,7 @@ import {
   PUT as updateTodo,
   DELETE as deleteTodo,
 } from '@/app/api/todos/[id]/route'
-import { closeDb, getDb } from '@/lib/db'
+import { closeDb, getDb, todoDB } from '@/lib/db'
 
 const futureDate = () => new Date(Date.now() + 5 * 60 * 1000).toISOString()
 
@@ -87,6 +87,61 @@ describe('POST /api/todos', () => {
     expect(res.status).toBe(400)
     const body = await res.json()
     expect(body.error).toMatch(/future/i)
+  })
+
+  it('creates a recurring todo with a valid pattern', async () => {
+    const req = makeRequest({
+      title: 'Weekly review',
+      due_date: futureDate(),
+      is_recurring: true,
+      recurrence_pattern: 'weekly',
+    })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.is_recurring).toBe(true)
+    expect(body.recurrence_pattern).toBe('weekly')
+  })
+
+  it('returns 400 when recurring todo has no due date', async () => {
+    const req = makeRequest({
+      title: 'Daily habit',
+      is_recurring: true,
+      recurrence_pattern: 'daily',
+    })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('Recurring todos require a due date')
+  })
+
+  it('returns 400 when recurring todo has no recurrence pattern', async () => {
+    const req = makeRequest({
+      title: 'Daily habit',
+      due_date: futureDate(),
+      is_recurring: true,
+    })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('Recurrence pattern is required')
+  })
+
+  it('returns 400 when pattern is provided without repeat enabled', async () => {
+    const req = makeRequest({
+      title: 'One-off task',
+      due_date: futureDate(),
+      is_recurring: false,
+      recurrence_pattern: 'daily',
+    })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('Recurrence pattern requires Repeat enabled')
   })
 })
 
@@ -160,7 +215,8 @@ describe('PUT /api/todos/[id]', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.title).toBe('New title')
+    expect(body.todo.title).toBe('New title')
+    expect(body.next_instance).toBeNull()
   })
 
   it('marks a todo as completed', async () => {
@@ -176,7 +232,66 @@ describe('PUT /api/todos/[id]', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.completed).toBe(true)
+    expect(body.todo.completed).toBe(true)
+    expect(body.next_instance).toBeNull()
+  })
+
+  it('creates the next instance when recurring todo is completed', async () => {
+    const todo = todoDB.create({
+      title: 'Daily habit',
+      due_date: '2026-05-22T09:00:00+08:00',
+      is_recurring: true,
+      recurrence_pattern: 'daily',
+    })
+
+    const req = new NextRequest(`http://localhost/api/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: true }),
+    })
+    const res = await updateTodo(req, makeParams(todo.id))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.todo.completed).toBe(true)
+    expect(body.next_instance).not.toBeNull()
+    expect(body.next_instance.title).toBe('Daily habit')
+    expect(body.next_instance.completed).toBe(false)
+    expect(body.next_instance.due_date).toBe('2026-05-23T09:00:00+08:00')
+    expect(body.next_instance.is_recurring).toBe(true)
+    expect(body.next_instance.recurrence_pattern).toBe('daily')
+  })
+
+  it('does not create duplicate next instances when completed repeatedly', async () => {
+    const todo = todoDB.create({
+      title: 'Daily habit',
+      due_date: '2026-05-22T09:00:00+08:00',
+      is_recurring: true,
+      recurrence_pattern: 'daily',
+    })
+
+    const firstReq = new NextRequest(`http://localhost/api/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: true }),
+    })
+    const firstRes = await updateTodo(firstReq, makeParams(todo.id))
+
+    const secondReq = new NextRequest(`http://localhost/api/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: true }),
+    })
+    const secondRes = await updateTodo(secondReq, makeParams(todo.id))
+
+    expect(firstRes.status).toBe(200)
+    expect(secondRes.status).toBe(200)
+
+    const firstBody = await firstRes.json()
+    const secondBody = await secondRes.json()
+    expect(firstBody.next_instance).not.toBeNull()
+    expect(secondBody.next_instance).toBeNull()
+    expect(todoDB.findAll()).toHaveLength(2)
   })
 
   it('returns 404 for non-existent id', async () => {
@@ -200,6 +315,41 @@ describe('PUT /api/todos/[id]', () => {
     })
     const res = await updateTodo(req, makeParams(id))
     expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when update enables recurrence without due_date', async () => {
+    const createRes = await createTodo(makeRequest({ title: 'Task without due date' }))
+    const { id } = await createRes.json()
+
+    const req = new NextRequest(`http://localhost/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_recurring: true, recurrence_pattern: 'daily' }),
+    })
+    const res = await updateTodo(req, makeParams(id))
+
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('Recurring todos require a due date')
+  })
+
+  it('returns 400 when update provides pattern without recurrence enabled', async () => {
+    const createRes = await createTodo(makeRequest({
+      title: 'Task',
+      due_date: futureDate(),
+    }))
+    const { id } = await createRes.json()
+
+    const req = new NextRequest(`http://localhost/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recurrence_pattern: 'weekly' }),
+    })
+    const res = await updateTodo(req, makeParams(id))
+
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('Recurrence pattern requires Repeat enabled')
   })
 })
 
