@@ -49,6 +49,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updated)
   } catch (error) {
+    if (error instanceof Error && /One or more tags do not exist/i.test(error.message)) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+
     console.error('PUT /api/todos/[id] error:', error)
     return NextResponse.json(
       { error: 'Failed to update todo' },

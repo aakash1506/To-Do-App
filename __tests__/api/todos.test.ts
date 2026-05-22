@@ -18,6 +18,7 @@ import {
   PUT as updateTodo,
   DELETE as deleteTodo,
 } from '@/app/api/todos/[id]/route'
+import { POST as createTag } from '@/app/api/tags/route'
 import { closeDb, getDb } from '@/lib/db'
 
 const futureDate = () => new Date(Date.now() + 5 * 60 * 1000).toISOString()
@@ -34,6 +35,14 @@ function makeParams(id: string | number) {
   return { params: Promise.resolve({ id: String(id) }) }
 }
 
+function makeTagRequest(body: unknown, method = 'POST'): NextRequest {
+  return new NextRequest('http://localhost/api/tags', {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 // Global teardown — runs after ALL test suites in this file
 afterAll(() => {
   closeDb()
@@ -41,7 +50,12 @@ afterAll(() => {
 })
 
 describe('POST /api/todos', () => {
-  beforeEach(() => getDb().exec('DELETE FROM todos'))
+  beforeEach(() => {
+    const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
+    db.exec('DELETE FROM todos')
+  })
 
   it('creates a todo with a title and returns 201', async () => {
     const req = makeRequest({ title: 'Test task' })
@@ -88,10 +102,48 @@ describe('POST /api/todos', () => {
     const body = await res.json()
     expect(body.error).toMatch(/future/i)
   })
+
+  it('creates a todo with tag ids and returns attached tags', async () => {
+    const workTagRes = await createTag(makeTagRequest({ name: 'Work', color: '#2563EB' }))
+    const urgentTagRes = await createTag(makeTagRequest({ name: 'Urgent', color: '#EF4444' }))
+    const workTag = await workTagRes.json()
+    const urgentTag = await urgentTagRes.json()
+
+    const req = makeRequest({
+      title: 'Tagged task',
+      tag_ids: [workTag.id, urgentTag.id],
+    })
+    const res = await createTodo(req)
+
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.tags).toHaveLength(2)
+  })
+
+  it('returns 400 for unknown tag id', async () => {
+    const req = makeRequest({ title: 'Bad tag', tag_ids: [99999] })
+    const res = await createTodo(req)
+    expect(res.status).toBe(400)
+  })
+
+  it('does not persist todo when tag id is invalid', async () => {
+    const req = makeRequest({ title: 'Should not persist', tag_ids: [99999] })
+    const res = await createTodo(req)
+    expect(res.status).toBe(400)
+
+    const listRes = await listTodos()
+    const body = await listRes.json()
+    expect(body.todos).toHaveLength(0)
+  })
 })
 
 describe('GET /api/todos', () => {
-  beforeEach(() => getDb().exec('DELETE FROM todos'))
+  beforeEach(() => {
+    const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
+    db.exec('DELETE FROM todos')
+  })
 
   it('returns empty todos array when no todos exist', async () => {
     const res = await listTodos()
@@ -112,7 +164,12 @@ describe('GET /api/todos', () => {
 })
 
 describe('GET /api/todos/[id]', () => {
-  beforeEach(() => getDb().exec('DELETE FROM todos'))
+  beforeEach(() => {
+    const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
+    db.exec('DELETE FROM todos')
+  })
 
   it('returns a todo by id', async () => {
     const createRes = await createTodo(makeRequest({ title: 'Find me' }))
@@ -145,7 +202,12 @@ describe('GET /api/todos/[id]', () => {
 })
 
 describe('PUT /api/todos/[id]', () => {
-  beforeEach(() => getDb().exec('DELETE FROM todos'))
+  beforeEach(() => {
+    const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
+    db.exec('DELETE FROM todos')
+  })
 
   it('updates the title', async () => {
     const createRes = await createTodo(makeRequest({ title: 'Old title' }))
@@ -201,10 +263,35 @@ describe('PUT /api/todos/[id]', () => {
     const res = await updateTodo(req, makeParams(id))
     expect(res.status).toBe(400)
   })
+
+  it('updates todo tags', async () => {
+    const createRes = await createTodo(makeRequest({ title: 'Task' }))
+    const { id } = await createRes.json()
+
+    const tagRes = await createTag(makeTagRequest({ name: 'Home', color: '#22C55E' }))
+    const tag = await tagRes.json()
+
+    const req = new NextRequest(`http://localhost/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag_ids: [tag.id] }),
+    })
+    const res = await updateTodo(req, makeParams(id))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.tags).toHaveLength(1)
+    expect(body.tags[0].name).toBe('Home')
+  })
 })
 
 describe('DELETE /api/todos/[id]', () => {
-  beforeEach(() => getDb().exec('DELETE FROM todos'))
+  beforeEach(() => {
+    const db = getDb()
+    db.exec('DELETE FROM todo_tags')
+    db.exec('DELETE FROM tags')
+    db.exec('DELETE FROM todos')
+  })
 
   it('deletes a todo and returns 204', async () => {
     const createRes = await createTodo(makeRequest({ title: 'Delete me' }))
