@@ -9,12 +9,16 @@ import { REMINDER_OPTIONS, formatReminderBadge } from '@/lib/reminders'
 interface Todo {
   id: number
   title: string
+  priority: Priority
   completed: boolean
   due_date: string | null
   reminder_minutes: number | null
   created_at: string
   updated_at: string
 }
+
+type Priority = 'high' | 'medium' | 'low'
+const PRIORITIES: Priority[] = ['high', 'medium', 'low']
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +40,37 @@ function formatDueDate(dateStr: string): string {
 function isOverdue(todo: Todo): boolean {
   if (!todo.due_date || todo.completed) return false
   return new Date(todo.due_date).getTime() < Date.now()
+}
+
+function getPriorityRank(priority: Priority): number {
+  if (priority === 'high') return 0
+  if (priority === 'medium') return 1
+  return 2
+}
+
+function sortByPriorityThenDueDate(a: Todo, b: Todo): number {
+  const priorityDiff = getPriorityRank(a.priority) - getPriorityRank(b.priority)
+  if (priorityDiff !== 0) return priorityDiff
+
+  if (!a.due_date && !b.due_date) {
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  }
+  if (!a.due_date) return 1
+  if (!b.due_date) return -1
+
+  const dueDiff = new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
+  if (dueDiff !== 0) return dueDiff
+
+  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+}
+
+function toPriority(value: string): Priority {
+  return PRIORITIES.includes(value as Priority) ? (value as Priority) : 'medium'
+}
+
+function toPriorityFilter(value: string): 'all' | Priority {
+  if (value === 'all') return 'all'
+  return toPriority(value)
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
@@ -70,11 +105,18 @@ function DueDateBadge({ dateStr }: { dateStr: string }) {
 interface EditModalProps {
   todo: Todo
   onClose: () => void
-  onSave: (id: number, title: string, due_date: string | null, reminder_minutes: number | null) => Promise<void>
+  onSave: (
+    id: number,
+    title: string,
+    due_date: string | null,
+    priority: Priority,
+    reminder_minutes: number | null,
+  ) => Promise<void>
 }
 
 function EditModal({ todo, onClose, onSave }: EditModalProps) {
   const [title, setTitle] = useState(todo.title)
+  const [priority, setPriority] = useState<Priority>(todo.priority)
   const [dueDate, setDueDate] = useState(
     todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : '',
   )
@@ -94,7 +136,7 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
         dueDate
           ? new Date(dueDate).toISOString()
           : null
-      await onSave(todo.id, title.trim(), due, dueDate ? reminderMinutes : null)
+      await onSave(todo.id, title.trim(), due, priority, dueDate ? reminderMinutes : null)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed')
@@ -120,6 +162,20 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               maxLength={500}
               autoFocus
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Priority
+            </label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(toPriority(e.target.value))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -185,6 +241,12 @@ interface TodoCardProps {
 function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
   const [deleting, setDeleting] = useState(false)
 
+  const priorityClasses = {
+    high: 'bg-red-100 text-red-700',
+    medium: 'bg-amber-100 text-amber-700',
+    low: 'bg-emerald-100 text-emerald-700',
+  } as const
+
   async function handleDelete() {
     if (!window.confirm(`Delete "${todo.title}"?`)) return
     setDeleting(true)
@@ -216,6 +278,13 @@ function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
         >
           {todo.title}
         </p>
+        <div className="mt-1">
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-medium ${priorityClasses[todo.priority]}`}
+          >
+            {todo.priority[0].toUpperCase() + todo.priority.slice(1)}
+          </span>
+        </div>
         {todo.due_date && (
           <div className="mt-1 flex flex-wrap gap-1">
             <DueDateBadge dateStr={todo.due_date} />
@@ -300,6 +369,8 @@ function Section({
 export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [title, setTitle] = useState('')
+  const [priority, setPriority] = useState<Priority>('medium')
+  const [priorityFilter, setPriorityFilter] = useState<'all' | Priority>('all')
   const [dueDate, setDueDate] = useState('')
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(null)
   const [addError, setAddError] = useState('')
@@ -343,12 +414,14 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim(),
+          priority,
           due_date: due,
           reminder_minutes: dueDate ? reminderMinutes : null,
         }),
       })
       setTodos((prev) => [...prev, todo])
       setTitle('')
+      setPriority('medium')
       setDueDate('')
       setReminderMinutes(null)
     } catch (err) {
@@ -389,6 +462,7 @@ export default function HomePage() {
     id: number,
     newTitle: string,
     newDueDate: string | null,
+    newPriority: Priority,
     newReminderMinutes: number | null,
   ) {
     const updated = await apiFetch<Todo>(`/api/todos/${id}`, {
@@ -397,6 +471,7 @@ export default function HomePage() {
       body: JSON.stringify({
         title: newTitle,
         due_date: newDueDate,
+        priority: newPriority,
         reminder_minutes: newReminderMinutes,
       }),
     })
@@ -418,9 +493,20 @@ export default function HomePage() {
 
   // ── Derived lists ────────────────────────────────────────────────────────
 
-  const overdueTodos = todos.filter((t) => isOverdue(t))
-  const activeTodos = todos.filter((t) => !t.completed && !isOverdue(t))
-  const completedTodos = todos.filter((t) => t.completed)
+  const priorityFilteredTodos = todos.filter((t) => {
+    if (priorityFilter === 'all') return true
+    return t.priority === priorityFilter
+  })
+
+  const overdueTodos = priorityFilteredTodos
+    .filter((t) => isOverdue(t))
+    .sort(sortByPriorityThenDueDate)
+  const activeTodos = priorityFilteredTodos
+    .filter((t) => !t.completed && !isOverdue(t))
+    .sort(sortByPriorityThenDueDate)
+  const completedTodos = priorityFilteredTodos
+    .filter((t) => t.completed)
+    .sort(sortByPriorityThenDueDate)
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -464,16 +550,28 @@ export default function HomePage() {
             {adding ? 'Adding…' : 'Add'}
           </button>
         </div>
-        <input
-          type="datetime-local"
-          value={dueDate}
-          onChange={(e) => {
-            setDueDate(e.target.value)
-            if (!e.target.value) setReminderMinutes(null)
-          }}
-          min={getMinFutureDate()}
-          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <select
+            value={priority}
+            onChange={(e) => setPriority(toPriority(e.target.value))}
+            className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Priority"
+          >
+            <option value="high">High priority</option>
+            <option value="medium">Medium priority</option>
+            <option value="low">Low priority</option>
+          </select>
+          <input
+            type="datetime-local"
+            value={dueDate}
+            onChange={(e) => {
+              setDueDate(e.target.value)
+              if (!e.target.value) setReminderMinutes(null)
+            }}
+            min={getMinFutureDate()}
+            className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
         <select
           value={reminderMinutes ?? ''}
           onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
@@ -487,6 +585,23 @@ export default function HomePage() {
         </select>
         {addError && <p className="text-red-600 text-sm">{addError}</p>}
       </form>
+
+      <div className="flex items-center gap-2">
+        <label htmlFor="priority-filter" className="text-sm text-gray-600">
+          Filter priority
+        </label>
+        <select
+          id="priority-filter"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(toPriorityFilter(e.target.value))}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">All</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
 
       {/* Todo lists */}
       {loading ? (

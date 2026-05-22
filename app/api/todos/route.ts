@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
 
     const todo = todoDB.create({
       title: parsed.data.title,
+      priority: parsed.data.priority,
       due_date: parsed.data.due_date ?? null,
       reminder_minutes: parsed.data.reminder_minutes ?? null,
       user_id: 1,

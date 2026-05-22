@@ -1,6 +1,7 @@
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
+import Database from 'better-sqlite3'
 
 // Use an in-memory or temp database for tests
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'todo-test-'))
@@ -53,6 +54,16 @@ describe('todoDB', () => {
       expect(todo.completed).toBe(false)
     })
 
+    it('defaults priority to medium', () => {
+      const todo = todoDB.create({ title: 'Default priority task' })
+      expect(todo.priority).toBe('medium')
+    })
+
+    it('creates a todo with explicit priority', () => {
+      const todo = todoDB.create({ title: 'Urgent task', priority: 'high' })
+      expect(todo.priority).toBe('high')
+    })
+
     it('assigns incrementing ids', () => {
       const a = todoDB.create({ title: 'First' })
       const b = todoDB.create({ title: 'Second' })
@@ -100,6 +111,18 @@ describe('todoDB', () => {
       const todos = todoDB.findAll()
       expect(todos[0].title).toBe('Sooner')
       expect(todos[1].title).toBe('Later')
+    })
+
+    it('sorts by priority before due date', () => {
+      const soon = new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString()
+      const later = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+
+      todoDB.create({ title: 'Low first by date', priority: 'low', due_date: soon })
+      todoDB.create({ title: 'High later by date', priority: 'high', due_date: later })
+
+      const todos = todoDB.findAll()
+      expect(todos[0].title).toBe('High later by date')
+      expect(todos[1].title).toBe('Low first by date')
     })
   })
 
@@ -167,6 +190,14 @@ describe('todoDB', () => {
       expect(updated!.due_date).toBeNull()
     })
 
+    it('updates priority', () => {
+      const todo = todoDB.create({ title: 'Task', priority: 'medium' })
+      const updated = todoDB.update(todo.id, { priority: 'low' })
+
+      expect(updated).not.toBeNull()
+      expect(updated!.priority).toBe('low')
+    })
+
     it('returns null for a non-existent id', () => {
       expect(todoDB.update(99999, { title: 'x' })).toBeNull()
     })
@@ -194,6 +225,46 @@ describe('todoDB', () => {
     it('does not delete other users todos', () => {
       const todo = todoDB.create({ title: 'User 2 task', user_id: 2 })
       expect(todoDB.delete(todo.id, 1)).toBe(false)
+    })
+  })
+
+  // ── migration ───────────────────────────────────────────────────────────────
+
+  describe('migration', () => {
+    it('adds priority column for legacy databases', () => {
+      closeDb()
+
+      const originalDbPath = process.env.DB_PATH
+      const legacyDbPath = path.join(tmpDir, 'legacy.db')
+      process.env.DB_PATH = legacyDbPath
+
+      const legacyDb = new Database(legacyDbPath)
+      legacyDb.exec(`
+        CREATE TABLE IF NOT EXISTS todos (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id    INTEGER NOT NULL DEFAULT 1,
+          title      TEXT    NOT NULL,
+          completed  INTEGER NOT NULL DEFAULT 0,
+          due_date   TEXT,
+          created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `)
+      legacyDb.close()
+
+      try {
+        const db = getDb()
+        const columns = db.prepare('PRAGMA table_info(todos)').all() as Array<{
+          name: string
+        }>
+        expect(columns.some((column) => column.name === 'priority')).toBe(true)
+
+        const todo = todoDB.create({ title: 'Migrated task' })
+        expect(todo.priority).toBe('medium')
+      } finally {
+        closeDb()
+        process.env.DB_PATH = originalDbPath
+      }
     })
   })
 })

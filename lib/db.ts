@@ -7,6 +7,7 @@ export interface Todo {
   id: number
   user_id: number
   title: string
+  priority: Priority
   completed: boolean
   due_date: string | null
   reminder_minutes: number | null
@@ -15,8 +16,11 @@ export interface Todo {
   updated_at: string
 }
 
+export type Priority = 'high' | 'medium' | 'low'
+
 export interface CreateTodoDto {
   title: string
+  priority?: Priority
   due_date?: string | null
   reminder_minutes?: number | null
   user_id?: number
@@ -24,6 +28,7 @@ export interface CreateTodoDto {
 
 export interface UpdateTodoDto {
   title?: string
+  priority?: Priority
   completed?: boolean
   due_date?: string | null
   reminder_minutes?: number | null
@@ -34,6 +39,7 @@ interface TodoRow {
   id: number
   user_id: number
   title: string
+  priority: Priority
   completed: number
   due_date: string | null
   reminder_minutes: number | null
@@ -54,6 +60,7 @@ export function getDb(): Database.Database {
     _db.pragma('foreign_keys = ON')
     initSchema(_db)
   }
+  ensureTodoMigrations(_db)
   return _db
 }
 
@@ -71,6 +78,7 @@ function initSchema(db: Database.Database): void {
       id                     INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id                INTEGER NOT NULL DEFAULT 1,
       title                  TEXT    NOT NULL,
+      priority               TEXT    NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
       completed              INTEGER NOT NULL DEFAULT 0,
       due_date               TEXT,
       reminder_minutes       INTEGER,
@@ -83,14 +91,29 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
   `)
 
-  // Idempotent migrations for existing databases
-  const migrations = [
-    `ALTER TABLE todos ADD COLUMN reminder_minutes       INTEGER`,
-    `ALTER TABLE todos ADD COLUMN last_notification_sent TEXT`,
-  ]
-  for (const sql of migrations) {
-    try { db.exec(sql) } catch { /* column already exists */ }
+  ensureTodoMigrations(db)
+}
+
+function ensureTodoMigrations(db: Database.Database): void {
+  const columns = db.prepare('PRAGMA table_info(todos)').all() as Array<{
+    name: string
+  }>
+  const hasColumn = (name: string) => columns.some((column) => column.name === name)
+
+  if (!hasColumn('priority')) {
+    // Keep migration SQL SQLite-compatible across versions.
+    db.exec("ALTER TABLE todos ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium';")
   }
+
+  if (!hasColumn('reminder_minutes')) {
+    db.exec('ALTER TABLE todos ADD COLUMN reminder_minutes INTEGER')
+  }
+
+  if (!hasColumn('last_notification_sent')) {
+    db.exec('ALTER TABLE todos ADD COLUMN last_notification_sent TEXT')
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos(priority);')
 }
 
 // ─── Row mapper ───────────────────────────────────────────────────────────────
@@ -113,13 +136,14 @@ export const todoDB = {
    */
   create(dto: CreateTodoDto): Todo {
     const db = getDb()
-    const stmt = db.prepare<[string, number, string | null, number | null]>(`
-      INSERT INTO todos (title, user_id, due_date, reminder_minutes)
-      VALUES (?, ?, ?, ?)
+    const stmt = db.prepare<[string, string, number, string | null, number | null]>(`
+      INSERT INTO todos (title, priority, user_id, due_date, reminder_minutes)
+      VALUES (?, ?, ?, ?, ?)
       RETURNING *
     `)
     const row = stmt.get(
       dto.title,
+      dto.priority ?? 'medium',
       dto.user_id ?? 1,
       dto.due_date ?? null,
       dto.reminder_minutes ?? null,
@@ -128,7 +152,7 @@ export const todoDB = {
   },
 
   /**
-   * Return all todos for a user, sorted by due_date ASC (nulls last), then created_at ASC.
+    * Return all todos for a user, sorted by priority, then due_date ASC (nulls last), then created_at ASC.
    */
   findAll(user_id = 1): Todo[] {
     const db = getDb()
@@ -136,6 +160,11 @@ export const todoDB = {
       SELECT * FROM todos
       WHERE user_id = ?
       ORDER BY
+        CASE priority
+          WHEN 'high' THEN 0
+          WHEN 'medium' THEN 1
+          ELSE 2
+        END,
         CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
         due_date ASC,
         created_at ASC
@@ -170,6 +199,10 @@ export const todoDB = {
     if (dto.title !== undefined) {
       fields.push('title = ?')
       values.push(dto.title)
+    }
+    if (dto.priority !== undefined) {
+      fields.push('priority = ?')
+      values.push(dto.priority)
     }
     if (dto.completed !== undefined) {
       fields.push('completed = ?')
