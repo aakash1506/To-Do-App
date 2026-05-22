@@ -9,6 +9,8 @@ export interface Todo {
   title: string
   completed: boolean
   due_date: string | null
+  reminder_minutes: number | null
+  last_notification_sent: string | null
   created_at: string
   updated_at: string
 }
@@ -16,6 +18,7 @@ export interface Todo {
 export interface CreateTodoDto {
   title: string
   due_date?: string | null
+  reminder_minutes?: number | null
   user_id?: number
 }
 
@@ -23,6 +26,7 @@ export interface UpdateTodoDto {
   title?: string
   completed?: boolean
   due_date?: string | null
+  reminder_minutes?: number | null
 }
 
 // Raw row from SQLite (integers for booleans)
@@ -32,6 +36,8 @@ interface TodoRow {
   title: string
   completed: number
   due_date: string | null
+  reminder_minutes: number | null
+  last_notification_sent: string | null
   created_at: string
   updated_at: string
 }
@@ -62,18 +68,29 @@ export function closeDb(): void {
 function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS todos (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id    INTEGER NOT NULL DEFAULT 1,
-      title      TEXT    NOT NULL,
-      completed  INTEGER NOT NULL DEFAULT 0,
-      due_date   TEXT,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id                INTEGER NOT NULL DEFAULT 1,
+      title                  TEXT    NOT NULL,
+      completed              INTEGER NOT NULL DEFAULT 0,
+      due_date               TEXT,
+      reminder_minutes       INTEGER,
+      last_notification_sent TEXT,
+      created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at             TEXT    NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
   `)
+
+  // Idempotent migrations for existing databases
+  const migrations = [
+    `ALTER TABLE todos ADD COLUMN reminder_minutes       INTEGER`,
+    `ALTER TABLE todos ADD COLUMN last_notification_sent TEXT`,
+  ]
+  for (const sql of migrations) {
+    try { db.exec(sql) } catch { /* column already exists */ }
+  }
 }
 
 // ─── Row mapper ───────────────────────────────────────────────────────────────
@@ -82,6 +99,8 @@ function mapRow(row: TodoRow): Todo {
   return {
     ...row,
     completed: row.completed === 1,
+    reminder_minutes: row.reminder_minutes ?? null,
+    last_notification_sent: row.last_notification_sent ?? null,
   }
 }
 
@@ -94,15 +113,16 @@ export const todoDB = {
    */
   create(dto: CreateTodoDto): Todo {
     const db = getDb()
-    const stmt = db.prepare<[string, number, string | null]>(`
-      INSERT INTO todos (title, user_id, due_date)
-      VALUES (?, ?, ?)
+    const stmt = db.prepare<[string, number, string | null, number | null]>(`
+      INSERT INTO todos (title, user_id, due_date, reminder_minutes)
+      VALUES (?, ?, ?, ?)
       RETURNING *
     `)
     const row = stmt.get(
       dto.title,
       dto.user_id ?? 1,
       dto.due_date ?? null,
+      dto.reminder_minutes ?? null,
     ) as TodoRow
     return mapRow(row)
   },
@@ -159,6 +179,10 @@ export const todoDB = {
       fields.push('due_date = ?')
       values.push(dto.due_date)
     }
+    if (dto.reminder_minutes !== undefined) {
+      fields.push('reminder_minutes = ?')
+      values.push(dto.reminder_minutes)
+    }
 
     if (fields.length === 0) return this.findById(id, user_id)
 
@@ -173,6 +197,39 @@ export const todoDB = {
     `)
     const row = stmt.get(...values) as TodoRow | undefined
     return row ? mapRow(row) : null
+  },
+
+  /**
+   * Find todos that are due for a browser notification:
+   *   - not completed
+   *   - has due_date and reminder_minutes
+   *   - (due_date - reminder_minutes) <= now
+   *   - last_notification_sent IS NULL
+   * Side-effect: sets last_notification_sent = datetime('now') for returned rows.
+   */
+  findDueForNotification(user_id = 1): Todo[] {
+    const db = getDb()
+    const rows = db.prepare<[number]>(`
+      SELECT * FROM todos
+      WHERE user_id = ?
+        AND completed = 0
+        AND due_date IS NOT NULL
+        AND reminder_minutes IS NOT NULL
+        AND last_notification_sent IS NULL
+        AND datetime(due_date, '-' || reminder_minutes || ' minutes') <= datetime('now')
+    `).all(user_id) as TodoRow[]
+
+    if (rows.length > 0) {
+      const placeholders = rows.map(() => '?').join(',')
+      db.prepare(`
+        UPDATE todos
+        SET last_notification_sent = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id IN (${placeholders})
+      `).run(...rows.map((r) => r.id))
+    }
+
+    return rows.map(mapRow)
   },
 
   /**

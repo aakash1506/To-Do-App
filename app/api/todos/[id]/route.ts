@@ -42,7 +42,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: firstError }, { status: 400 })
     }
 
-    const updated = todoDB.update(numId, parsed.data, 1)
+    const updated = todoDB.update(numId, {
+      ...parsed.data,
+      reminder_minutes: parsed.data.reminder_minutes ?? undefined,
+    }, 1)
     if (!updated) {
       return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
     }
